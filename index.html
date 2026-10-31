@@ -6077,7 +6077,7 @@ var UI = (function () {
   }
   function roleBadges(p, mine) {
     var b = '', bt = g.bout;
-    if (vout[p]) b += badge(mine ? 'вы вышли' : 'вышел' + (g.sex && g.sex[p] === 'f' ? 'а' : ''), 'вых.', 'out');
+    if (vout[p]) b += badge(mine ? 'вы вышли' : (g.sex && g.sex[p] === 'f' ? 'вышла' : 'вышел'), 'вых.', 'out');
     else if (bt && !dealing) {
       if (p === bt.att) b += badge(mine ? 'ходите' : 'ходит', 'ход');
       if (p === bt.def) b += badge(mine ? 'отбиваетесь' : 'отбивается', 'отб.', 'def');
@@ -6771,6 +6771,10 @@ var UI = (function () {
       default: return next();
     }
   }
+  // что сломалось в показе — в консоль и в window.__uiErr (для разбора)
+  function uiErr(err, e) {
+    try { console.error('[durak] показ события', e && e.e, err); (window.__uiErr = window.__uiErr || []).push((e && e.e) + ': ' + (err && err.message)); } catch (x) { }
+  }
   function liveCount() { var n = 0; for (var i = 0; i < g.N; i++) if (!vout[i]) n++; return n; }
 
   var handTimer = null;
@@ -6786,7 +6790,13 @@ var UI = (function () {
       if (evIdx >= g.ev.length) { pumping = false; busy = false; return ready(); }
       var e = g.ev[evIdx++];
       if (e.e === 'hand-end') { pumping = false; busy = false; }
-      handleEvent(e, step);
+      /* Сбой в показе одного события не должен ронять стол: партия в
+         движке уже посчитана, недорисованное событие пропускаем. На
+         последней партии турнира страж не спасал (g.over уже стоит), и
+         стол замирал намертво (31.10, «закончился турнир — зависла»). */
+      var went = false, once = function () { if (went) return; went = true; step(); };
+      try { handleEvent(e, once); }
+      catch (err) { uiErr(err, e); if (e.e === 'hand-end') { try { showResult(e); } catch (e2) { uiErr(e2, e); ready(); } } else once(); }
     }
   }
 
@@ -6998,7 +7008,7 @@ var UI = (function () {
       var who = sd[i].map(function (p) {
         var pl = r.place.indexOf(p);
         return ART.ava(faceOf(p), letterOf(p), 'sm') + ' ' + esc(g.names[p]) +
-          (pl >= 0 ? ' <span class="dim">' + (p === ME ? 'вышли' : 'вышел' + (g.sex[p] === 'f' ? 'а' : '')) + ' ' +
+          (pl >= 0 ? ' <span class="dim">' + (p === ME ? 'вышли' : (g.sex[p] === 'f' ? 'вышла' : 'вышел')) + ' ' +
             (p !== ME && g.sex[p] === 'f' ? ['первой', 'второй', 'третьей', 'четвёртой'] : ['первым', 'вторым', 'третьим', 'четвёртым'])[pl] + '</span>' : '');
       }).join('<br>');
       var fool = !r.draw && r.foolSide === i;
@@ -7511,6 +7521,18 @@ var UI = (function () {
   function anyPend() { return g && (g.pending || (g.isNet && g.pendHold)); }
   function guardOK() { guardSince = Date.now(); }
   function guard() {
+    /* Последняя партия турнира: движок уже поставил «турнир окончен», а
+       показ застрял — раньше страж тут молчал навсегда. Ждём 10 с и
+       дотягиваем: события до конца, итоги партии, итог турнира. */
+    if (g && g.over && !overDone) {
+      if ($('#modal').classList.contains('on') || netHold) { guardSince = 0; return; }
+      if (!guardSince) { guardSince = Date.now(); return; }
+      if (Date.now() - guardSince < 10000) return;
+      guardSince = 0; pausedUI = false; pumping = false; busy = false; needReady = false; repause();
+      if (evIdx < g.ev.length) return pump();
+      for (var k = g.ev.length - 1; k >= 0; k--) if (g.ev[k].e === 'hand-end') return showResult(g.ev[k]);
+      return ready();
+    }
     if (!g || g.over || !anyPend()) { guardSince = 0; return; }
     var s = tableStamp();
     if (s !== guardStamp || !guardSince) { guardStamp = s; return guardOK(); }
@@ -7968,7 +7990,7 @@ var Boot = (function () {
     cfgV: 1                      // номер настроек: поднимается, когда меняем значение по умолчанию
   };
   var game = null, brains = [];
-  var BUILD = '31.10 18:03';        // подставляет build.py — чтобы было видно, какая версия открыта
+  var BUILD = '31.10 19:16';        // подставляет build.py — чтобы было видно, какая версия открыта
 
   function load() {
     try {
